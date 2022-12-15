@@ -1,0 +1,62 @@
+import requests
+
+aviasales_token = '8fd2e8bc8876913e12eb1a2730aa4722'
+
+sort = {'sorting_by_price': 'price', 'sorting_by_route': 'route'}
+
+
+def get_cheapest_ticket(origin: str,
+                        destination: str,
+                        currency: str,
+                        departure_at: str,
+                        return_at: str,
+                        sorting: str,
+                        direct: str,
+                        limit: int):
+    return requests.get(
+        url=f"https://api.travelpayouts.com/aviasales/v3/prices_for_dates?origin={origin}&destination={destination}&"
+            f"currency={currency}&departure_at={departure_at}&return_at={return_at}&sorting={sorting}&direct={direct}&"
+            f"limit={limit}&token={aviasales_token}").json()
+
+
+def get_autocomplete(term: str,
+                     locale: str):
+    request = requests.get(
+        url=f"http://autocomplete.travelpayouts.com/places2?term={term}&locale={locale}&"
+            f"types[]=airport&types[]=city"
+    ).json()
+    if len(request) == 0:
+        return ''
+    else:
+        for response in request:
+            return response['code']
+
+
+def get_country_name(country: str,
+                     locale: str):
+    response = requests.get(
+        url=f"http://autocomplete.travelpayouts.com/places2?term={country}&locale={locale}&"
+            f"types[]=country"
+    ).json()
+    if not response:
+        return 'Россия'
+    else:
+        return response[0]['name']
+
+
+def get_currency_name(country: str):
+    responses = requests.get(
+        url="http://api.travelpayouts.com/data/ru/countries.json"
+    ).json()
+    for response in responses:
+        if response['name'] == country:
+            return response['currency']
+
+
+def get_rub_exchange_rate(currency_name: str):
+    response = requests.get(
+        url="https://www.aviasales.ru/search-api/adaptors/currency.json"
+    ).json()
+    return response[currency_name]
+
+
