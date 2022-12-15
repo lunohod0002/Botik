@@ -1,0 +1,411 @@
+from datetime import datetime
+
+import telebot
+from tg_config import token
+
+from api import get_cheapest_ticket, get_autocomplete, get_country_name, get_currency_name, get_rub_exchange_rate
+
+bot = telebot.TeleBot(token)
+
+storage = telebot.StateMemoryStorage()
+
+
+def gen_main_keyboard():
+    button_book_flight = telebot.types.InlineKeyboardButton(text='Найти авиабилет', callback_data='book_flight')
+    button_exchange_rates = telebot.types.InlineKeyboardButton(text='Курс валют к рублю',
+                                                               callback_data='exchange_rates')
+
+    main_keyboard = telebot.types.InlineKeyboardMarkup()
+    main_keyboard.row(button_book_flight)
+    main_keyboard.row(button_exchange_rates)
+
+    return main_keyboard
+
+
+def gen_skip_param_keyboard():
+    skip_button = telebot.types.InlineKeyboardButton(text='Пропустить', callback_data='skip_param')
+
+    skip_param_keyboard = telebot.types.InlineKeyboardMarkup()
+    skip_param_keyboard.row(skip_button)
+
+    return skip_param_keyboard
+
+
+def gen_sorting_keyboard():
+    sorting_by_price_button = telebot.types.InlineKeyboardButton(text='По цене',
+                                                                 callback_data='sorting_by_price')
+    sorting_by_route_button = telebot.types.InlineKeyboardButton(text='По популярности',
+                                                                 callback_data='sorting_by_route')
+    skip_button = telebot.types.InlineKeyboardButton(text='Пропустить', callback_data='skip_param')
+
+    sorting_keyboard = telebot.types.InlineKeyboardMarkup()
+    sorting_keyboard.row(sorting_by_price_button)
+    sorting_keyboard.row(sorting_by_route_button)
+    sorting_keyboard.row(skip_button)
+
+    return sorting_keyboard
+
+
+def gen_direct_keyboard():
+    with_direct_button = telebot.types.InlineKeyboardButton(text='С пересадками', callback_data='with_direct')
+    without_direct_button = telebot.types.InlineKeyboardButton(text='Без пересадок', callback_data='without_direct')
+    skip_button = telebot.types.InlineKeyboardButton(text='Пропустить', callback_data='skip_param')
+
+    direct_keyboard = telebot.types.InlineKeyboardMarkup()
+    direct_keyboard.row(with_direct_button)
+    direct_keyboard.row(without_direct_button)
+    direct_keyboard.row(skip_button)
+
+    return direct_keyboard
+
+
+def get_ticket_text(tg_id):
+    try:
+        current_storage = storage.get_data(chat_id=tg_id, user_id=tg_id)
+        response = get_cheapest_ticket(origin=get_autocomplete(current_storage['origin'], 'ru'),
+                                       destination=get_autocomplete(current_storage['destination'], 'ru'),
+                                       currency='rub',
+                                       departure_at=current_storage['departure_at'],
+                                       return_at=current_storage['return_at'],
+                                       sorting=current_storage['sorting'],
+                                       direct=current_storage['direct'],
+                                       limit=10)['data'][0]
+        return f"Самый дешевый билет:\n\n" \
+               f"Дата и время вылета: {datetime.strptime(str(response['departure_at'])[:-6], '%Y-%m-%dT%H:%M:%S')} (продолжительность полета: {response['duration']} минут), стоимость: {response['price']} рублей\n\n" \
+               f"Город отправления: {response['origin']} (аэропорт: {response['origin_airport']})\n" \
+               f"Город прибытия: {response['destination']} (аэропорт: {response['destination_airport']})\n" \
+               f"Авиакомпания: {response['airline']}\n\n" \
+               f"""Подробнее по <a href="https://www.aviasales.ru{response['link']}">ссылке</a>""", None
+    except Exception as _ex:
+        return 'Билет с данными параметрами не найден\n\n' \
+               f'{get_params_text(tg_id)}', gen_change_params_keyboard()
+
+
+change_params = ['change_origin',
+                 'change_destination',
+                 'change_departure_at',
+                 'change_return_at',
+                 'change_sorting',
+                 'change_direct',
+                 'change_sorting_by_price',
+                 'change_sorting_by_route',
+                 'change_with_direct',
+                 'change_without_direct',
+                 'change_skip_param']
+
+changing_params = ['changing_origin',
+                   'changing_destination',
+                   'changing_departure_at',
+                   'changing_return_at',
+                   'changing_sorting',
+                   'changing_direct']
+
+
+def get_params_text(tg_id):
+    params = storage.get_data(chat_id=tg_id, user_id=tg_id)
+    sort = params['sorting']
+    if sort is None:
+        sort = 'не указано'
+    elif sort == 'route':
+        sort = 'по популярности'
+    else:
+        sort = 'по цене'
+    direct = params['direct']
+    if direct is None:
+        direct = 'не указано'
+    elif direct:
+        direct = 'без пересадок'
+    else:
+        direct = 'с пересадками'
+    return f"<b>Точка отправления</b>: {params['origin']}\n" \
+           f"<b>Точка прибытия</b>: {params['destination']}\n" \
+           f"<b>Дата отправления</b>: {params['departure_at']}\n" \
+           f"<b>Дата прибытия</b>: {params['return_at']}\n" \
+           f"<b>Сортировка</b>: {sort}\n" \
+           f"<b>Наличие пересадок</b>: {direct}"
+
+
+def gen_change_params_keyboard():
+    button_origin = telebot.types.InlineKeyboardButton(text='Изменить пункт отправления',
+                                                       callback_data='change_origin')
+    button_destination = telebot.types.InlineKeyboardButton(text='Изменить пункт прибытия',
+                                                            callback_data='change_destination')
+    button_departure_at = telebot.types.InlineKeyboardButton(text='Изменить время отправления',
+                                                             callback_data='change_departure_at')
+    button_return_at = telebot.types.InlineKeyboardButton(text='Изменить время прибытия',
+                                                          callback_data='change_return_at')
+    button_sorting = telebot.types.InlineKeyboardButton(text='Изменить сортировку',
+                                                        callback_data='change_sorting')
+    button_direct = telebot.types.InlineKeyboardButton(text='Изменить наличие пересадок',
+                                                       callback_data='change_direct')
+
+    change_params_keyboard = telebot.types.InlineKeyboardMarkup()
+    change_params_keyboard.row(button_origin)
+    change_params_keyboard.row(button_destination)
+    change_params_keyboard.row(button_departure_at)
+    change_params_keyboard.row(button_return_at)
+    change_params_keyboard.row(button_sorting)
+    change_params_keyboard.row(button_direct)
+    return change_params_keyboard
+
+
+def get_exchange_rate_text(country):
+    country = get_country_name(country, 'ru')
+    currency_name = get_currency_name(country)
+    exchange_rate = get_rub_exchange_rate(str(currency_name).lower())
+
+    return f"{exchange_rate} RUB = 1 {currency_name}"
+
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id, "Привет! Нажми на кнопку чтобы начать", reply_markup=gen_main_keyboard())
+    storage.reset_data(chat_id=message.from_user.id, user_id=message.from_user.id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data in change_params)
+def callback_query(call):
+    print('call.data')
+    match call.data:
+        case 'change_origin':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id,
+                              state='changing_origin')
+            bot.send_message(chat_id=call.from_user.id, text='Напишите пункт отправления (город или аэропорт)')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'change_destination':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id,
+                              state='changing_destination')
+            bot.send_message(chat_id=call.from_user.id, text='Напишите пункт прибытия (город или аэропорт)')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'change_departure_at':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id,
+                              state='changing_departure_at')
+            bot.send_message(chat_id=call.from_user.id, text='Напишите дату вылета из пункта отправления '
+                                                             '(в формате YYYY-MM или YYYY-MM-DD)')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'change_return_at':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id,
+                              state='changing_return_at')
+            bot.send_message(chat_id=call.from_user.id, text='Напишите дату возвращения'
+                                                             '(в формате YYYY-MM или YYYY-MM-DD)')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'change_sorting':
+            bot.send_message(chat_id=call.from_user.id, text='Выберите сортировку цен:',
+                             reply_markup=gen_sorting_keyboard())
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='change_sorting')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'change_direct':
+            bot.send_message(chat_id=call.from_user.id, text='C пересадками или без?',
+                             reply_markup=gen_direct_keyboard())
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id,
+                              state='change_direct')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    match call.data:
+        case 'book_flight':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='choose_origin')
+            bot.send_message(chat_id=call.from_user.id, text='Напишите пункт отправления (город или аэропорт)')
+            storage.reset_data(chat_id=call.from_user.id, user_id=call.from_user.id)
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'sorting_by_price':
+            bot.send_message(chat_id=call.from_user.id, text='С пересадками или без',
+                             reply_markup=gen_direct_keyboard())
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='choose_direct')
+            storage.set_data(chat_id=call.from_user.id, user_id=call.from_user.id,
+                             key='sorting', value='price')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'sorting_by_route':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='choose_direct')
+            storage.set_data(chat_id=call.from_user.id, user_id=call.from_user.id,
+                             key='sorting', value='route')
+            bot.send_message(chat_id=call.from_user.id, text='С пересадками или без',
+                             reply_markup=gen_direct_keyboard())
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'with_direct':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='complete')
+            storage.set_data(chat_id=call.from_user.id, user_id=call.from_user.id,
+                             key='direct', value='false')
+            text, keyboard = get_ticket_text(call.from_user.id)
+            if keyboard is not None:
+                bot.send_message(chat_id=call.from_user.id, text=text,
+                                 reply_markup=keyboard, parse_mode='html')
+            else:
+                bot.send_message(chat_id=call.from_user.id, text=text, parse_mode='html')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'without_direct':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='complete')
+            storage.set_data(chat_id=call.from_user.id, user_id=call.from_user.id,
+                             key='direct', value='true')
+            text, keyboard = get_ticket_text(call.from_user.id)
+            if keyboard is not None:
+                bot.send_message(chat_id=call.from_user.id, text=text,
+                                 reply_markup=keyboard, parse_mode='html')
+            else:
+                bot.send_message(chat_id=call.from_user.id, text=text, parse_mode='html')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'skip_param':
+            match storage.get_state(chat_id=call.from_user.id, user_id=call.from_user.id):
+                case 'choose_departure_at':
+                    storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='choose_return_at')
+                    storage.set_data(chat_id=call.from_user.id, user_id=call.from_user.id,
+                                     key='departure_at', value='')
+                    bot.send_message(chat_id=call.from_user.id,
+                                     text='Напишите дату возвращения (в формате YYYY-MM или YYYY-MM-DD)',
+                                     reply_markup=gen_skip_param_keyboard())
+                    bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+                case 'choose_return_at':
+                    storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='choose_sorting')
+                    storage.set_data(chat_id=call.from_user.id, user_id=call.from_user.id,
+                                     key='return_at', value='')
+                    bot.send_message(chat_id=call.from_user.id,
+                                     text='Выберите сортировку цен:',
+                                     reply_markup=gen_sorting_keyboard())
+                    bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+                case 'choose_sorting':
+                    storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='choose_direct')
+                    storage.set_data(chat_id=call.from_user.id, user_id=call.from_user.id,
+                                     key='sorting', value='')
+                    bot.send_message(chat_id=call.from_user.id, text='С пересадками или без',
+                                     reply_markup=gen_direct_keyboard())
+                    bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+                case 'choose_direct':
+                    storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='complete')
+                    storage.set_data(chat_id=call.from_user.id, user_id=call.from_user.id,
+                                     key='direct', value='false')
+                    text, keyboard = get_ticket_text(call.from_user.id)
+                    if keyboard is not None:
+                        bot.send_message(chat_id=call.from_user.id, text=text,
+                                         reply_markup=keyboard, parse_mode='html')
+                    else:
+                        bot.send_message(chat_id=call.from_user.id, text=text, parse_mode='html')
+                    bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+        case 'exchange_rates':
+            storage.set_state(chat_id=call.from_user.id, user_id=call.from_user.id, state='exchange_rate_country')
+            bot.send_message(chat_id=call.from_user.id, text='Напишите страну валюты',
+                             parse_mode='html')
+            bot.answer_callback_query(callback_query_id=call.id, show_alert=True)
+
+
+@bot.message_handler(content_types=['text'])
+def booking(message):
+    match storage.get_state(chat_id=message.from_user.id, user_id=message.from_user.id):
+        case 'choose_origin':
+            value = message.text
+            if get_autocomplete(value, 'ru') == '':
+                bot.send_message(chat_id=message.from_user.id,
+                                 text='Такого города/аэропорта не существует(попробуй еще раз)')
+                storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                  state='choose_origin')
+            else:
+                storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                  state='choose_destination')
+                storage.set_data(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                 key='origin', value=value)
+                bot.send_message(chat_id=message.from_user.id, text='Напишите пункт прибытия (город или аэропорт)')
+        case 'choose_destination':
+            value = message.text
+            if get_autocomplete(value, 'ru') == '':
+                bot.send_message(chat_id=message.from_user.id,
+                                 text='Такого города/аэропорта не существует(попробуй еще раз)')
+                storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                  state='choose_destination')
+            else:
+                storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                  state='choose_departure_at')
+                storage.set_data(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                 key='destination', value=value)
+                bot.send_message(chat_id=message.from_user.id,
+                                 text='Напишите дату вылета из пункта отправления (в формате YYYY-MM или YYYY-MM-DD)',
+                                 reply_markup=gen_skip_param_keyboard())
+        case 'choose_departure_at':
+            storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id, state='choose_return_at')
+            storage.set_data(chat_id=message.from_user.id, user_id=message.from_user.id,
+                             key='departure_at', value=f'{message.text}')
+            bot.send_message(chat_id=message.from_user.id,
+                             text='Напишите дату возвращения (в формате YYYY-MM или YYYY-MM-DD)',
+                             reply_markup=gen_skip_param_keyboard())
+        case 'choose_return_at':
+            storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id, state='choose_sorting')
+            storage.set_data(chat_id=message.from_user.id, user_id=message.from_user.id,
+                             key='return_at', value=f"{message.text}")
+            bot.send_message(chat_id=message.from_user.id,
+                             text='Выберите сортировку цен:',
+                             reply_markup=gen_sorting_keyboard())
+        case 'changing_origin':
+            value = message.text
+            if get_autocomplete(value, 'ru') == '':
+                bot.send_message(chat_id=message.from_user.id,
+                                 text='Такого города/аэропорта не существует(попробуй еще раз)')
+                storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                  state='changing_origin')
+            else:
+                storage.set_data(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                 key='origin', value=value)
+                text, keyboard = get_ticket_text(message.from_user.id)
+                if keyboard is not None:
+                    bot.send_message(chat_id=message.from_user.id, text=f"{text}\n\n"
+                                                                        f"{get_params_text(message.from_user.id)}",
+                                     reply_markup=keyboard, parse_mode='html')
+                else:
+                    bot.send_message(chat_id=message.from_user.id, text=text, parse_mode='html')
+
+            storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id, state='complete')
+        case 'changing_destination':
+            value = message.text
+            if get_autocomplete(value, 'ru') == '':
+                bot.send_message(chat_id=message.from_user.id,
+                                 text='Такого города/аэропорта не существует(попробуй еще раз)')
+                storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                  state='changing_destination')
+            else:
+                storage.set_data(chat_id=message.from_user.id, user_id=message.from_user.id,
+                                 key='destination', value=value)
+                text, keyboard = get_ticket_text(message.from_user.id)
+                if keyboard is not None:
+                    bot.send_message(chat_id=message.from_user.id, text=f"{text}\n\n"
+                                                                        f"{get_params_text(message.from_user.id)}",
+                                     reply_markup=keyboard, parse_mode='html')
+                else:
+                    bot.send_message(chat_id=message.from_user.id, text=text, parse_mode='html')
+
+            storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id, state='complete')
+        case 'changing_departure_at':
+            storage.set_data(chat_id=message.from_user.id, user_id=message.from_user.id,
+                             key='departure_at', value=f'{message.text}')
+            text, keyboard = get_ticket_text(message.from_user.id)
+            if keyboard is not None:
+                bot.send_message(chat_id=message.from_user.id, text=f"{text}\n\n"
+                                                                    f"{get_params_text(message.from_user.id)}",
+                                 reply_markup=keyboard, parse_mode='html')
+            else:
+                bot.send_message(chat_id=message.from_user.id, text=text, parse_mode='html')
+
+            storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id, state='complete')
+        case 'changing_return_at':
+            storage.set_data(chat_id=message.from_user.id, user_id=message.from_user.id,
+                             key='return_at', value=f'{message.text}')
+            text, keyboard = get_ticket_text(message.from_user.id)
+            if keyboard is not None:
+                bot.send_message(chat_id=message.from_user.id, text=f"{text}\n\n"
+                                                                    f"{get_params_text(message.from_user.id)}",
+                                 reply_markup=keyboard, parse_mode='html')
+            else:
+                bot.send_message(chat_id=message.from_user.id, text=text, parse_mode='html')
+
+            storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id, state='complete')
+        case 'exchange_rate_country':
+            text = get_exchange_rate_text(message.text)
+            bot.send_message(chat_id=message.from_user.id, text=text, parse_mode='html')
+            storage.set_state(chat_id=message.from_user.id, user_id=message.from_user.id, state='exchange_rate_country')
+
+
+bot.set_my_commands([
+    telebot.types.BotCommand("/start", "Запуск бота")
+])
+
+bot.set_chat_menu_button()
+
+bot.polling(none_stop=True)
